@@ -4,6 +4,10 @@ Moloi Qolani Truelove & Tshegofatso Tshepang Chikwane
 Sol Plaatje University
 
 Run:  streamlit run app.py
+
+API KEY SETUP:
+  Local  → put your key in .streamlit/secrets.toml  (see that file)
+  Cloud  → Streamlit dashboard → Settings → Secrets
 """
 
 import streamlit as st
@@ -14,7 +18,6 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import os, sys, base64
 from datetime import datetime
-import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 from model_engine import (
@@ -25,6 +28,15 @@ from model_engine import (
 from report_generator import generate_approved_report, generate_declined_report
 
 
+# ── GROQ API KEY  ──────────────────────────────────────────────────────────────
+# Reads from .streamlit/secrets.toml locally, or from Streamlit Cloud secrets.
+# Falls back to a clear error message so the app still loads without crashing.
+def _get_groq_key() -> str:
+    try:
+        return st.secrets["GROQ_API_KEY"]
+    except (KeyError, FileNotFoundError):
+        return ""
+
 
 # PAGE CONFIG
 st.set_page_config(
@@ -34,84 +46,234 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# GLOBAL CSS
+# ── GLOBAL CSS ─────────────────────────────────────────────────────────────────
+# All text colours are declared explicitly so the UI looks correct on both
+# light browsers and browsers/OS set to dark-mode.
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap');
 
-html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
+/* ── Force light-mode base so dark-OS-theme can't override our palette ── */
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"],
+[data-testid="block-container"], .main, .block-container {
+    background-color: #F4F6F9 !important;
+    color: #0A1628 !important;
+}
 
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif;
+    color: #0A1628;
+}
+
+/* ── All generic Streamlit text ── */
+p, span, label, div, li, td, th, h1, h2, h3, h4, h5, h6 {
+    color: #0A1628;
+}
+
+/* ── Streamlit widget labels ── */
+[data-testid="stWidgetLabel"] > div,
+[data-testid="stWidgetLabel"] p,
+.stSelectbox label, .stNumberInput label,
+.stTextInput label, .stCheckbox label,
+.stRadio label, .stSlider label,
+.stTextArea label {
+    color: #0A1628 !important;
+}
+
+/* ── Streamlit markdown / caption ── */
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stMarkdownContainer"] td,
+[data-testid="stMarkdownContainer"] th,
+[data-testid="stCaptionContainer"] p {
+    color: #0A1628 !important;
+}
+
+/* ── Tables ── */
+[data-testid="stDataFrame"] td,
+[data-testid="stDataFrame"] th,
+.dataframe td, .dataframe th {
+    color: #0A1628 !important;
+    background-color: #ffffff !important;
+}
+
+/* ── Input fields ── */
+input, textarea, select,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stSelectbox"] select {
+    color: #0A1628 !important;
+    background-color: #ffffff !important;
+    border-color: #c6dde1 !important;
+}
+
+/* ── Tabs ── */
+[data-testid="stTabs"] button {
+    color: #0A1628 !important;
+}
+[data-testid="stTabs"] button[aria-selected="true"] {
+    color: #007B8A !important;
+    border-bottom-color: #007B8A !important;
+}
+
+/* ── Metric widget ── */
+[data-testid="stMetric"] label,
+[data-testid="stMetric"] [data-testid="stMetricValue"],
+[data-testid="stMetric"] [data-testid="stMetricDelta"] {
+    color: #0A1628 !important;
+}
+
+/* ── Sidebar ── */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0A1628 0%, #0d2040 100%);
+    background: linear-gradient(180deg, #0A1628 0%, #0d2040 100%) !important;
     border-right: 1px solid #1e3a5f;
 }
-[data-testid="stSidebar"] * { color: white !important; }
+[data-testid="stSidebar"] *,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] div {
+    color: white !important;
+}
 [data-testid="stSidebar"] .stRadio label {
-    padding: 8px 14px; border-radius: 8px; cursor: pointer;
-    display: block; margin: 2px 0; font-size: 14px !important;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: block;
+    margin: 2px 0;
+    font-size: 14px !important;
     transition: background 0.2s;
+    color: white !important;
 }
-[data-testid="stSidebar"] .stRadio label:hover { background: rgba(255,255,255,0.1); }
+[data-testid="stSidebar"] .stRadio label:hover {
+    background: rgba(255,255,255,0.1);
+}
 
+/* ── Custom card components ── */
 .metric-card {
-    background: white; border: 1px solid #E8E8E8; border-radius: 12px;
-    padding: 20px; text-align: center;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: transform 0.2s;
+    background: #ffffff;
+    border: 1px solid #E8E8E8;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    transition: transform 0.2s;
 }
-.metric-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.10); }
-.metric-card .metric-label { font-size: 10px; color: #888; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px; }
-.metric-card .metric-value { font-size: 28px; font-weight: 700; color: #0A1628; }
-.metric-card .metric-sub { font-size: 11px; color: #007B8A; margin-top: 4px; }
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.10);
+}
+.metric-card .metric-label {
+    font-size: 10px;
+    color: #888888;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+.metric-card .metric-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #0A1628;
+}
+.metric-card .metric-sub {
+    font-size: 11px;
+    color: #007B8A;
+    margin-top: 4px;
+}
 
 .chapter-header {
     background: linear-gradient(135deg, #0A1628 0%, #007B8A 100%);
-    padding: 28px 32px; border-radius: 14px; margin-bottom: 28px;
+    padding: 28px 32px;
+    border-radius: 14px;
+    margin-bottom: 28px;
 }
-.chapter-header h1 { color: white; font-family: 'DM Serif Display', serif; font-size: 28px; margin: 0 0 6px 0; }
-.chapter-header p { color: rgba(232,244,246,0.80); font-size: 14px; margin: 0; }
+.chapter-header h1 {
+    color: #ffffff !important;
+    font-family: 'DM Serif Display', serif;
+    font-size: 28px;
+    margin: 0 0 6px 0;
+}
+.chapter-header p {
+    color: rgba(232,244,246,0.80) !important;
+    font-size: 14px;
+    margin: 0;
+}
 
 .decision-approved {
-    background: #D6F0E0; color: #1A6B3C; border: 2px solid #1A6B3C;
-    border-radius: 12px; padding: 20px 24px; text-align: center;
-    font-size: 28px; font-weight: 700;
+    background: #D6F0E0;
+    color: #1A6B3C !important;
+    border: 2px solid #1A6B3C;
+    border-radius: 12px;
+    padding: 20px 24px;
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
 }
 .decision-declined {
-    background: #FDECEA; color: #C0392B; border: 2px solid #C0392B;
-    border-radius: 12px; padding: 20px 24px; text-align: center;
-    font-size: 28px; font-weight: 700;
+    background: #FDECEA;
+    color: #C0392B !important;
+    border: 2px solid #C0392B;
+    border-radius: 12px;
+    padding: 20px 24px;
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
 }
 
 .chat-user {
-    background: #0A1628; color: white; padding: 12px 18px;
-    border-radius: 18px 18px 4px 18px; margin: 8px 0; max-width: 78%;
-    margin-left: auto; font-size: 14px;
+    background: #0A1628;
+    color: #ffffff !important;
+    padding: 12px 18px;
+    border-radius: 18px 18px 4px 18px;
+    margin: 8px 0;
+    max-width: 78%;
+    margin-left: auto;
+    font-size: 14px;
 }
 .chat-bot {
-    background: #E8F4F6; color: #0A1628; padding: 12px 18px;
-    border-radius: 18px 18px 18px 4px; margin: 8px 0; max-width: 82%;
-    font-size: 14px; line-height: 1.6;
-}
-
-.suggestion-btn {
-    background: white; border: 1px solid #007B8A; border-radius: 20px;
-    padding: 8px 16px; color: #007B8A; font-size: 13px; cursor: pointer;
-    margin: 4px; display: inline-block;
+    background: #E8F4F6;
+    color: #0A1628 !important;
+    padding: 12px 18px;
+    border-radius: 18px 18px 18px 4px;
+    margin: 8px 0;
+    max-width: 82%;
+    font-size: 14px;
+    line-height: 1.6;
 }
 
 .score-ring {
-    width: 120px; height: 120px; border-radius: 50%;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    margin: 0 auto 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.20);
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.20);
 }
 
-/* ── FIX: Hide Streamlit's sidebar collapse/expand arrow permanently ── */
+/* ── Streamlit submit/form buttons ── */
+[data-testid="baseButton-secondary"],
+[data-testid="baseButton-primary"],
+.stButton button {
+    color: #0A1628 !important;
+    background-color: #ffffff !important;
+    border-color: #007B8A !important;
+}
+[data-testid="baseButton-primary"]:hover,
+.stButton button:hover {
+    background-color: #007B8A !important;
+    color: #ffffff !important;
+}
+
+/* ── Hide chrome ── */
 [data-testid="collapsedControl"]                                             { display: none !important; }
 button[kind="header"]                                                        { display: none !important; }
 section[data-testid="stSidebar"] > div:first-child > div:first-child button { display: none !important; }
-
-#MainMenu { visibility: hidden; }
-footer { visibility: hidden; }
-header { visibility: hidden; }
+#MainMenu  { visibility: hidden; }
+footer     { visibility: hidden; }
+header     { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -126,7 +288,7 @@ def get_data():
     return load_and_clean()
 
 
-# SIDEBAR NAVIGATION
+# ── SIDEBAR NAVIGATION ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
     <div style="text-align:center; padding: 20px 0 24px;">
@@ -160,7 +322,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── NAVIGATOR ──────────────────────────────────────────────────────────────
     st.markdown("""
     <hr style="border-color:rgba(255,255,255,0.12); margin:20px 0 16px;">
     <div style="color:#C9A84C; font-size:10px; letter-spacing:2px; text-transform:uppercase; margin-bottom:10px; padding: 0 4px;">
@@ -355,7 +516,7 @@ function navSend(){
 </html>""", height=520, scrolling=False)
 
 
-# PAGE: HOME
+# ── PAGE: HOME ─────────────────────────────────────────────────────────────────
 if page == "Home":
     st.markdown("""
     <div class="chapter-header">
@@ -392,7 +553,7 @@ if page == "Home":
             <div style="color:#C9A84C; font-size:10px; letter-spacing:2px; text-transform:uppercase; margin-bottom:16px;">Live Model Metrics</div>
             <div style="margin-bottom:14px;">
                 <div style="color:rgba(232,244,246,0.55); font-size:11px;">AUC Score</div>
-                <div style="color:white; font-size:28px; font-weight:700;">{md['auc']:.4f}</div>
+                <div style="color:#ffffff; font-size:28px; font-weight:700;">{md['auc']:.4f}</div>
             </div>
             <div style="margin-bottom:14px;">
                 <div style="color:rgba(232,244,246,0.55); font-size:11px;">Gini Coefficient</div>
@@ -417,7 +578,7 @@ if page == "Home":
         <div style="background:#E8F4F6; border-radius:10px; padding:18px;">
             <div style="color:#007B8A; font-size:10px; letter-spacing:2px; text-transform:uppercase; margin-bottom:6px;">Author 1</div>
             <div style="font-size:18px; font-weight:700; color:#0A1628;">Moloi Qolani Truelove</div>
-            <div style="font-size:12px; color:#555; margin-top:4px;">Sol Plaatje University<br>Advanced Diploma in ICT: Applications Development (NQF 7)</div>
+            <div style="font-size:12px; color:#555555; margin-top:4px;">Sol Plaatje University<br>Advanced Diploma in ICT: Applications Development (NQF 7)</div>
         </div>
         """, unsafe_allow_html=True)
     with c2:
@@ -425,12 +586,12 @@ if page == "Home":
         <div style="background:#E8F4F6; border-radius:10px; padding:18px;">
             <div style="color:#007B8A; font-size:10px; letter-spacing:2px; text-transform:uppercase; margin-bottom:6px;">Author 2</div>
             <div style="font-size:18px; font-weight:700; color:#0A1628;">Tshegofatso Tshepang Chikwane</div>
-            <div style="font-size:12px; color:#555; margin-top:4px;">Sol Plaatje University<br>BSc Data Science (NQF 7)</div>
+            <div style="font-size:12px; color:#555555; margin-top:4px;">Sol Plaatje University<br>BSc Data Science (NQF 7)</div>
         </div>
         """, unsafe_allow_html=True)
 
 
-# PAGE: DATA QUALITY
+# ── PAGE: DATA QUALITY ─────────────────────────────────────────────────────────
 elif page == "Data Quality":
     st.markdown("""<div class="chapter-header"><h1>Data Quality Report</h1>
     <p>Missing values &nbsp;|&nbsp; Outliers &nbsp;|&nbsp; Class imbalance &nbsp;|&nbsp; Column overview</p></div>""",
@@ -475,7 +636,9 @@ elif page == "Data Quality":
         fig.add_vline(x=40, line_dash="dot", line_color=RED, annotation_text="40%")
         fig.update_layout(height=280, margin=dict(t=20,b=20,l=10,r=80),
                           showlegend=False, paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-                          xaxis=dict(showgrid=True, gridcolor="#EEE"),
+                          xaxis=dict(showgrid=True, gridcolor="#EEE", color="#0A1628"),
+                          yaxis=dict(color="#0A1628"),
+                          font=dict(color="#0A1628"),
                           hoverlabel=dict(bgcolor=NAVY, font_color="white"))
         st.plotly_chart(fig, use_container_width=True)
 
@@ -494,8 +657,9 @@ elif page == "Data Quality":
             annotations=[dict(text=f"<b>{df['default_flag'].mean()*100:.1f}%<br>Default</b>",
                               x=0.5, y=0.5, font_size=14, font_color=RED, showarrow=False)],
             paper_bgcolor="white",
+            font=dict(color="#0A1628"),
             hoverlabel=dict(bgcolor=NAVY, font_color="white"),
-            legend=dict(orientation="h", yanchor="bottom", y=-0.15),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.15, font=dict(color="#0A1628")),
         )
         st.plotly_chart(fig2, use_container_width=True)
 
@@ -524,7 +688,7 @@ elif page == "Data Quality":
                  use_container_width=True, height=300)
 
 
-# PAGE: EDA EXPLORER
+# ── PAGE: EDA EXPLORER ─────────────────────────────────────────────────────────
 elif page == "EDA Explorer":
     st.markdown("""<div class="chapter-header"><h1>EDA Explorer</h1>
     <p>Univariate analysis &nbsp;|&nbsp; Bivariate analysis &nbsp;|&nbsp; WoE/IV rankings</p></div>""",
@@ -561,7 +725,9 @@ elif page == "EDA Explorer":
                     hovertemplate=f"<b>Defaulted</b><br>{selected}: %{{x}}<br>Density: %{{y:.4f}}<extra></extra>"))
                 fig.update_layout(barmode="overlay", title=f"Distribution: {selected}",
                     height=350, paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-                    margin=dict(t=40,b=20), legend=dict(orientation="h",y=-0.2),
+                    margin=dict(t=40,b=20),
+                    font=dict(color="#0A1628"),
+                    legend=dict(orientation="h",y=-0.2,font=dict(color="#0A1628")),
                     hoverlabel=dict(bgcolor=NAVY, font_color="white"))
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -586,7 +752,9 @@ elif page == "EDA Explorer":
                     strength = "Strong" if iv_val > 0.30 else "Medium" if iv_val > 0.10 else "Weak" if iv_val > 0.02 else "Useless"
                     fig2.update_layout(title=f"WoE per Bin - IV = {iv_val:.4f} ({strength})",
                         height=350, paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-                        margin=dict(t=40,b=20,r=80), showlegend=False,
+                        margin=dict(t=40,b=20,r=80),
+                        font=dict(color="#0A1628"),
+                        showlegend=False,
                         hoverlabel=dict(bgcolor=NAVY, font_color="white"))
                     st.plotly_chart(fig2, use_container_width=True)
                 except Exception as e:
@@ -617,7 +785,9 @@ elif page == "EDA Explorer":
                           annotation_text=f"Avg {overall_dr:.1f}%")
             fig.update_layout(title=f"Default Rate by {selected}",
                 height=max(300, len(dr)*48), paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-                margin=dict(t=40,b=20,r=80), showlegend=False,
+                margin=dict(t=40,b=20,r=80),
+                font=dict(color="#0A1628"),
+                showlegend=False,
                 hoverlabel=dict(bgcolor=NAVY, font_color="white"))
             st.plotly_chart(fig, use_container_width=True)
 
@@ -636,7 +806,9 @@ elif page == "EDA Explorer":
                 labels={"default_flag": "Default", feat_x: feat_x, feat_y: feat_y},
                 opacity=0.45, title=f"{feat_x} vs {feat_y}")
             fig.update_layout(height=380, paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-                              margin=dict(t=40,b=20), hoverlabel=dict(bgcolor=NAVY, font_color="white"))
+                              margin=dict(t=40,b=20),
+                              font=dict(color="#0A1628"),
+                              hoverlabel=dict(bgcolor=NAVY, font_color="white"))
             st.plotly_chart(fig, use_container_width=True)
 
         with col_b:
@@ -654,8 +826,9 @@ elif page == "EDA Explorer":
             ))
             fig2.update_layout(title="Correlation Matrix", height=380,
                 paper_bgcolor="white", plot_bgcolor="#FAFAFA", margin=dict(t=40,b=20),
-                xaxis=dict(tickangle=45, showgrid=False, tickfont=dict(size=9)),
-                yaxis=dict(showgrid=False, autorange="reversed", tickfont=dict(size=9)),
+                font=dict(color="#0A1628"),
+                xaxis=dict(tickangle=45, showgrid=False, tickfont=dict(size=9, color="#0A1628")),
+                yaxis=dict(showgrid=False, autorange="reversed", tickfont=dict(size=9, color="#0A1628")),
                 hoverlabel=dict(bgcolor=NAVY, font_color="white"))
             st.plotly_chart(fig2, use_container_width=True)
 
@@ -677,13 +850,15 @@ elif page == "EDA Explorer":
                           annotation_text=lbl, annotation_position="top right")
         fig.update_layout(title="All Features Ranked by Information Value (IV)",
             height=max(500, len(iv_sorted)*28), paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-            margin=dict(t=50,b=20,r=160), showlegend=False,
+            margin=dict(t=50,b=20,r=160),
+            font=dict(color="#0A1628"),
+            showlegend=False,
             hoverlabel=dict(bgcolor=NAVY, font_color="white"))
         st.plotly_chart(fig, use_container_width=True)
         st.dataframe(iv_df, use_container_width=True, hide_index=True)
 
 
-# PAGE: MODEL & SCORECARD
+# ── PAGE: MODEL & SCORECARD ────────────────────────────────────────────────────
 elif page == "Model & Scorecard":
     st.markdown("""<div class="chapter-header"><h1>Model & Scorecard</h1>
     <p>Credit scorecard points table &nbsp;|&nbsp; Model performance &nbsp;|&nbsp; LightGBM reference comparison</p></div>""",
@@ -697,7 +872,7 @@ elif page == "Model & Scorecard":
         st.markdown("""
         <div style="background:#F8FAFB; border-left:4px solid #007B8A; padding:16px 20px; border-radius:0 8px 8px 0; margin-bottom:20px;">
             <div style="font-size:14px; font-weight:600; color:#0A1628; margin-bottom:4px;">What is a Credit Scorecard?</div>
-            <div style="font-size:13px; color:#555; line-height:1.7;">
+            <div style="font-size:13px; color:#444444; line-height:1.7;">
             A credit scorecard converts the logistic regression model into a points-based system.
             Every feature bin is assigned a number of points. The points are added together to produce
             a final credit score between 300 and 900. Higher score = lower risk = more likely to be approved.
@@ -706,9 +881,7 @@ elif page == "Model & Scorecard":
         </div>
         """, unsafe_allow_html=True)
 
-        import numpy as np
         lr_model   = md["pipe"].named_steps["lr"]
-        scaler     = md["pipe"].named_steps["scaler"]
         feat_names = md["feat_names"]
         coefs      = lr_model.coef_[0]
         intercept  = lr_model.intercept_[0]
@@ -721,9 +894,6 @@ elif page == "Model & Scorecard":
         coef_df["Direction"] = coef_df["Coefficient"].apply(
             lambda x: "Lowers Risk" if x > 0 else "Raises Risk"
         )
-        coef_df["Direction Color"] = coef_df["Coefficient"].apply(
-            lambda x: "#1A6B3C" if x > 0 else "#C0392B"
-        )
 
         display_df = coef_df[["Feature","Coefficient","Points Contribution","Direction"]].copy()
         display_df.columns = ["Feature (WoE)", "Beta Coefficient", "Score Points", "Risk Direction"]
@@ -733,7 +903,6 @@ elif page == "Model & Scorecard":
         st.markdown(f"**Model Intercept (base score offset): {offset:.0f} points**")
         st.markdown("<br>", unsafe_allow_html=True)
 
-        import plotly.graph_objects as go
         fig_sc = go.Figure(go.Bar(
             x=display_df["Score Points"],
             y=display_df["Feature (WoE)"],
@@ -756,7 +925,9 @@ elif page == "Model & Scorecard":
             title="Scorecard Points by Feature (Green = Helps Approval, Red = Hurts Approval)",
             height=max(450, len(display_df)*32),
             paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-            margin=dict(t=50,b=20,r=100), showlegend=False,
+            margin=dict(t=50,b=20,r=100),
+            font=dict(color="#0A1628"),
+            showlegend=False,
             hoverlabel=dict(bgcolor=NAVY, font_color="white"),
             xaxis_title="Score Points Contribution",
         )
@@ -785,7 +956,7 @@ elif page == "Model & Scorecard":
         st.markdown("""
         <div style="background:#F8FAFB; border-left:4px solid #007B8A; padding:16px 20px; border-radius:0 8px 8px 0; margin-bottom:20px;">
             <div style="font-size:14px; font-weight:600; color:#0A1628; margin-bottom:4px;">How to Read These Charts</div>
-            <div style="font-size:13px; color:#555; line-height:1.7;">
+            <div style="font-size:13px; color:#444444; line-height:1.7;">
             These charts show how well the model separates defaulters from non-defaulters.
             The further the curves are from the diagonal line, the better the model is performing.
             All metrics were calculated on the test set — data the model never saw during training.
@@ -830,12 +1001,13 @@ elif page == "Model & Scorecard":
             fig_roc.update_layout(
                 height=380, paper_bgcolor="white", plot_bgcolor="#FAFAFA",
                 margin=dict(t=20,b=40,l=40,r=20),
+                font=dict(color="#0A1628"),
                 xaxis_title="False Positive Rate (% of good customers wrongly declined)",
                 yaxis_title="True Positive Rate (% of defaulters caught)",
-                legend=dict(orientation="h", y=-0.2),
+                legend=dict(orientation="h", y=-0.2, font=dict(color="#0A1628")),
                 hoverlabel=dict(bgcolor=NAVY, font_color="white"),
-                xaxis=dict(range=[0,1], showgrid=True, gridcolor="#EEE"),
-                yaxis=dict(range=[0,1], showgrid=True, gridcolor="#EEE"),
+                xaxis=dict(range=[0,1], showgrid=True, gridcolor="#EEE", color="#0A1628"),
+                yaxis=dict(range=[0,1], showgrid=True, gridcolor="#EEE", color="#0A1628"),
             )
             st.plotly_chart(fig_roc, use_container_width=True)
             st.caption("The higher the curve bows toward the top-left corner, the better the model. The diagonal line represents a model with no skill — just random guessing.")
@@ -866,9 +1038,10 @@ elif page == "Model & Scorecard":
                 barmode="overlay", height=380,
                 paper_bgcolor="white", plot_bgcolor="#FAFAFA",
                 margin=dict(t=20,b=40,l=40,r=20),
+                font=dict(color="#0A1628"),
                 xaxis_title="Credit Score",
                 yaxis_title="Number of Applicants",
-                legend=dict(orientation="h", y=-0.2),
+                legend=dict(orientation="h", y=-0.2, font=dict(color="#0A1628")),
                 hoverlabel=dict(bgcolor=NAVY, font_color="white"),
             )
             st.plotly_chart(fig_dist, use_container_width=True)
@@ -904,6 +1077,7 @@ elif page == "Model & Scorecard":
         fig_cm.update_layout(
             height=320, paper_bgcolor="white",
             margin=dict(t=20,b=20,l=10,r=10),
+            font=dict(color="#0A1628"),
             hoverlabel=dict(bgcolor=NAVY, font_color="white"),
         )
         st.plotly_chart(fig_cm, use_container_width=True)
@@ -913,7 +1087,7 @@ elif page == "Model & Scorecard":
         st.markdown("""
         <div style="background:#FFF3DC; border-left:4px solid #C9A84C; padding:16px 20px; border-radius:0 8px 8px 0; margin-bottom:20px;">
             <div style="font-size:14px; font-weight:600; color:#7B4800; margin-bottom:4px;">Why We Show LightGBM</div>
-            <div style="font-size:13px; color:#555; line-height:1.7;">
+            <div style="font-size:13px; color:#444444; line-height:1.7;">
             LightGBM is a powerful machine learning model with no interpretability constraints.
             We trained it purely as a performance ceiling — to show how close our logistic regression
             gets to the best possible result. We are NOT submitting LightGBM. Our final model is
@@ -950,8 +1124,9 @@ elif page == "Model & Scorecard":
             title="Model Performance Comparison — Baseline vs Our LR vs LightGBM Ceiling",
             height=420, paper_bgcolor="white", plot_bgcolor="#FAFAFA",
             margin=dict(t=60,b=40,l=40,r=40),
-            yaxis=dict(range=[0.60, 0.88], title="AUC Score", showgrid=True, gridcolor="#EEE"),
-            xaxis=dict(showgrid=False),
+            font=dict(color="#0A1628"),
+            yaxis=dict(range=[0.60, 0.88], title="AUC Score", showgrid=True, gridcolor="#EEE", color="#0A1628"),
+            xaxis=dict(showgrid=False, color="#0A1628"),
             showlegend=False,
             hoverlabel=dict(bgcolor=NAVY, font_color="white"),
         )
@@ -997,7 +1172,7 @@ elif page == "Model & Scorecard":
         """)
 
 
-# PAGE: BUSINESS DASHBOARD
+# ── PAGE: BUSINESS DASHBOARD ───────────────────────────────────────────────────
 elif page == "Business Dashboard":
     st.markdown("""<div class="chapter-header"><h1>Business Decision Dashboard</h1>
     <p>Threshold analysis &nbsp;|&nbsp; Rand-value impact &nbsp;|&nbsp; Volume vs Risk</p></div>""",
@@ -1030,8 +1205,10 @@ elif page == "Business Dashboard":
         fig.add_trace(go.Scatter(x=[0,1], y=[0,1], mode="lines", name="Random",
             line=dict(color=MUTED, width=1, dash="dot"), hoverinfo="skip"))
         fig.update_layout(height=340, paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-            margin=dict(t=20,b=20), xaxis_title="FPR", yaxis_title="TPR",
-            legend=dict(orientation="h", y=-0.2),
+            margin=dict(t=20,b=20),
+            font=dict(color="#0A1628"),
+            xaxis_title="FPR", yaxis_title="TPR",
+            legend=dict(orientation="h", y=-0.2, font=dict(color="#0A1628")),
             hoverlabel=dict(bgcolor=NAVY, font_color="white"))
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1097,7 +1274,9 @@ elif page == "Business Dashboard":
                       annotation_text=f"Current: {threshold}")
         fig.update_layout(title="Revenue vs Bad Debt by Threshold", height=320,
             paper_bgcolor="white", plot_bgcolor="#FAFAFA", margin=dict(t=40,b=20),
-            legend=dict(orientation="h",y=-0.25), hoverlabel=dict(bgcolor=NAVY, font_color="white"))
+            font=dict(color="#0A1628"),
+            legend=dict(orientation="h",y=-0.25,font=dict(color="#0A1628")),
+            hoverlabel=dict(bgcolor=NAVY, font_color="white"))
         st.plotly_chart(fig, use_container_width=True)
 
     with col_b:
@@ -1111,7 +1290,9 @@ elif page == "Business Dashboard":
         fig2.add_hline(y=0, line_color=NAVY, line_width=1.5)
         fig2.update_layout(title="Net Financial Position by Threshold", height=320,
             paper_bgcolor="white", plot_bgcolor="#FAFAFA", margin=dict(t=40,b=20),
-            showlegend=False, hoverlabel=dict(bgcolor=NAVY, font_color="white"))
+            font=dict(color="#0A1628"),
+            showlegend=False,
+            hoverlabel=dict(bgcolor=NAVY, font_color="white"))
         st.plotly_chart(fig2, use_container_width=True)
 
     st.subheader("Precision / Recall - Business Meaning")
@@ -1140,13 +1321,22 @@ elif page == "Business Dashboard":
         "Approval Rate (%)":"{:.1f}%"}), use_container_width=True, hide_index=True)
 
 
-# PAGE: CREDIT AI CHATBOT
+# ── PAGE: CREDIT AI CHATBOT ────────────────────────────────────────────────────
 elif page == "Credit AI Chatbot":
     st.markdown("""<div class="chapter-header"><h1>Credit AI Chatbot</h1>
     <p>Ask anything about loans, credit scores, or this model in plain language</p></div>""",
     unsafe_allow_html=True)
 
     md_model = get_model()
+    groq_key = _get_groq_key()
+
+    if not groq_key:
+        st.error(
+            "⚠️  Groq API key not found. "
+            "Add `GROQ_API_KEY = 'your_key'` to `.streamlit/secrets.toml` locally, "
+            "or paste it into **Settings → Secrets** on Streamlit Cloud.",
+            icon="🔑",
+        )
 
     coef_context = md_model["coef_df"].head(12).to_string(index=False)
     iv_context   = md_model["iv_df"].head(10).to_string(index=False)
@@ -1236,21 +1426,23 @@ YOUR PERSONALITY AND RULES:
     if st.session_state.get("pending_response") and st.session_state.chat_history:
         last_msg = st.session_state.chat_history[-1]
         if last_msg["role"] == "user":
-            try:
-                from groq import Groq
-                api_key = "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"
-                client  = Groq(api_key=api_key)
-                messages = [{"role": "system", "content": system_prompt}]
-                messages += [{"role": m["role"], "content": m["content"]}
-                             for m in st.session_state.chat_history]
-                resp = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=messages,
-                    max_tokens=600,
-                )
-                response_text = resp.choices[0].message.content
-            except Exception as e:
-                response_text = f"Sorry, I could not connect right now. Error: {e}"
+            if not groq_key:
+                response_text = "⚠️ No API key configured. Please add GROQ_API_KEY to your Streamlit secrets."
+            else:
+                try:
+                    from groq import Groq
+                    client  = Groq(api_key=groq_key)
+                    messages = [{"role": "system", "content": system_prompt}]
+                    messages += [{"role": m["role"], "content": m["content"]}
+                                 for m in st.session_state.chat_history]
+                    resp = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=messages,
+                        max_tokens=600,
+                    )
+                    response_text = resp.choices[0].message.content
+                except Exception as e:
+                    response_text = f"Sorry, I could not connect right now. Error: {e}"
             st.session_state.chat_history.append({"role": "assistant", "content": response_text})
         st.session_state["pending_response"] = False
         st.rerun()
@@ -1275,23 +1467,25 @@ YOUR PERSONALITY AND RULES:
     if send and user_input.strip():
         st.session_state.chat_history.append({"role": "user", "content": user_input})
 
-        try:
-            from groq import Groq
-            api_key = "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"
-            client  = Groq(api_key=api_key)
-            messages = [{"role": "system", "content": system_prompt}]
-            messages += [
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.chat_history
-            ]
-            resp = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=messages,
-                max_tokens=600,
-            )
-            response_text = resp.choices[0].message.content
-        except Exception as e:
-            response_text = f"Sorry, I could not connect to the AI service right now. Error: {e}"
+        if not groq_key:
+            response_text = "⚠️ No API key configured. Please add GROQ_API_KEY to your Streamlit secrets."
+        else:
+            try:
+                from groq import Groq
+                client  = Groq(api_key=groq_key)
+                messages = [{"role": "system", "content": system_prompt}]
+                messages += [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in st.session_state.chat_history
+                ]
+                resp = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    max_tokens=600,
+                )
+                response_text = resp.choices[0].message.content
+            except Exception as e:
+                response_text = f"Sorry, I could not connect to the AI service right now. Error: {e}"
 
         st.session_state.chat_history.append(
             {"role": "assistant", "content": response_text}
@@ -1299,7 +1493,7 @@ YOUR PERSONALITY AND RULES:
         st.rerun()
 
 
-# PAGE: LOAN DECISION REPORT
+# ── PAGE: LOAN DECISION REPORT ─────────────────────────────────────────────────
 elif page == "Loan Decision Report":
     st.markdown("""<div class="chapter-header"><h1>Loan Decision Report</h1>
     <p>Enter applicant details &nbsp;|&nbsp; Get a credit score &nbsp;|&nbsp; Download a full decision report</p></div>""",
@@ -1312,7 +1506,7 @@ elif page == "Loan Decision Report":
         <div style="background:#E8F4F6; border-radius:10px; padding:20px 24px; margin-bottom:20px;">
             <div style="color:#007B8A; font-size:11px; letter-spacing:2px; text-transform:uppercase; margin-bottom:6px;">Step 1 of 2</div>
             <div style="font-size:20px; font-weight:700; color:#0A1628;">Applicant Profile</div>
-            <div style="font-size:13px; color:#555; margin-top:4px;">Fill in all fields below. The model will score this applicant instantly.</div>
+            <div style="font-size:13px; color:#444444; margin-top:4px;">Fill in all fields below. The model will score this applicant instantly.</div>
         </div>
         """, unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
@@ -1387,7 +1581,7 @@ elif page == "Loan Decision Report":
         st.markdown("""
         <div style="background:#0A1628; border-radius:12px; padding:16px 24px; margin-bottom:20px;">
             <div style="color:#C9A84C; font-size:11px; letter-spacing:2px; text-transform:uppercase;">Credit Assessment Result</div>
-            <div style="color:white; font-size:13px; margin-top:4px;">Based on the applicant profile entered above</div>
+            <div style="color:#ffffff; font-size:13px; margin-top:4px;">Based on the applicant profile entered above</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1423,7 +1617,9 @@ elif page == "Loan Decision Report":
             fig.update_layout(
                 title="Top 10 Feature Contributions (Green = Lower Risk, Red = Higher Risk)",
                 height=340, paper_bgcolor="white", plot_bgcolor="#FAFAFA",
-                margin=dict(t=40,b=20,r=80), showlegend=False,
+                margin=dict(t=40,b=20,r=80),
+                font=dict(color="#0A1628"),
+                showlegend=False,
                 hoverlabel=dict(bgcolor=NAVY, font_color="white"))
             st.plotly_chart(fig, use_container_width=True)
 
@@ -1476,7 +1672,7 @@ elif page == "Loan Decision Report":
         href = (
             '<a href="data:text/html;base64,' + b64 + '" '
             'download="' + filename + '" '
-            'style="display:inline-block; background:' + bg_color + '; color:white; '
+            'style="display:inline-block; background:' + bg_color + '; color:#ffffff; '
             'padding:14px 32px; border-radius:8px; text-decoration:none; '
             'font-weight:600; font-size:15px; letter-spacing:0.5px;">'
             'Download ' + decision + ' Report</a>'
